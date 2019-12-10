@@ -1,0 +1,54 @@
+#!/usr/bin/env python
+# encoding:utf8
+
+import argparse
+import requests
+import base64
+import subprocess
+import os
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-v', '--verbose', help='print out more responses in detail', action='store_true')
+parser.add_argument('-H', '--hostname', help='API server hostname (default: localhost)', default='localhost')
+parser.add_argument('-p', '--port', help='API server port (default: 8180)', default='8180')
+parser.add_argument('-s', '--src-path', help='Source pathname')
+parser.add_argument('-d', '--dest-dir', help='Destination directory')
+args = parser.parse_args()
+
+
+def get_token():
+    auth_key = base64.b64encode('polaris_client:polaris'.encode()).decode()
+    auth_hdr = {'Content-Type': 'application/json', 'Authorization': 'Basic ' + auth_key}
+    r = requests.post(METATRON_URL + '/oauth/token?grant_type=password&username=admin&password=admin', headers=auth_hdr)
+    return r.json()['access_token']
+
+
+def get_upload_policy():
+    j = requests.get(DATASETS_URL + '/file_upload', headers=HDR).json()
+    return j['upload_id'], j['limit_size']
+
+
+def post_upload_file(hdr, upload_id, limit_size, total_size, basename):
+    del hdr['Content-Type']
+    params = 'name=%s&chunk=0&chunks=1&storage_type=LOCAL&upload_id=%s&chunk_size=%s&total_size=%s' % \
+             (basename, upload_id, limit_size, total_size)
+    files = {'file': open(args.src_path, 'rb')}
+    r = requests.post(DATASETS_URL + '/file_upload?' + params, headers=HDR, files=files)
+    return r.json()['storedUri']
+
+
+METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
+DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
+
+HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
+
+upload_id, limit_size = get_upload_policy()
+
+total_size = subprocess.check_output("wc -c %s | awk '{print $1'}" % args.src_path, shell=True).decode()
+total_size = total_size.strip()
+basename = os.path.basename(args.src_path)
+
+stored_uri = post_upload_file(HDR, upload_id, limit_size, total_size, basename)
+print(stored_uri)
+
+# eof
