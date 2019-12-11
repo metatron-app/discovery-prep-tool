@@ -6,13 +6,28 @@ import requests
 import base64
 import subprocess
 import os
+import copy
+import json
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-v', '--verbose', help='print out more responses in detail', action='store_true')
 parser.add_argument('-H', '--hostname', help='API server hostname (default: localhost)', default='localhost')
 parser.add_argument('-p', '--port', help='API server port (default: 8180)', default='8180')
 parser.add_argument('-s', '--src-path', help='Source pathname')
-parser.add_argument('-d', '--dest-dir', help='Destination directory')
+parser.add_argument('-d', '--dest-path', help='Destination pathname (If i')
+parser.add_argument('-w', '--wds-id', help='Target wrangled dataset ID to apply')
+parser.add_argument('-D', '--datasource-id', help='Target datasource ID to ingest into')
+parser.add_argument('--src-db', help='Source database')
+parser.add_argument('--src-tbl', help='Source table')
+parser.add_argument('--src-user', help='Source DB username')
+parser.add_argument('--src-pass', help='Source DB password')
+parser.add_argument('--dest-db', help='Destination database')
+parser.add_argument('--dest-tbl', help='Destination table')
+parser.add_argument('--dest-user', help='Destination DB username')
+parser.add_argument('--dest-pass', help='Destination DB password')
+parser.add_argument('--search-wds', help='Search wrangled dataset IDs by name')
+parser.add_argument('--search-datasource', help='Search datasource IDs by name')
+parser.add_argument('--manual-colcnt', help='Manual max column count when the max column count')
 args = parser.parse_args()
 
 
@@ -28,27 +43,49 @@ def get_upload_policy():
     return j['upload_id'], j['limit_size']
 
 
-def post_upload_file(hdr, upload_id, limit_size, total_size, basename):
-    del hdr['Content-Type']
+def post_upload_file(upload_id, limit_size, total_size, basename):
+    hdr = copy.deepcopy(HDR)
+    del hdr['Content-Type']  # Content-Type becomes multipart/form-data when files is not None
     params = 'name=%s&chunk=0&chunks=1&storage_type=LOCAL&upload_id=%s&chunk_size=%s&total_size=%s' % \
              (basename, upload_id, limit_size, total_size)
     files = {'file': open(args.src_path, 'rb')}
-    r = requests.post(DATASETS_URL + '/file_upload?' + params, headers=HDR, files=files)
+    r = requests.post(DATASETS_URL + '/file_upload?' + params, headers=hdr, files=files)
     return r.json()['storedUri']
+
+
+def get_file_format(basename):
+    if basename.endswith('.xlsx') or basename.endswith('.xls'):
+        return 'EXCEL'
+    elif basename.endswith('.json'):
+        return 'JSON'
+    else:
+        return 'CSV'
+
+
+def post_create_file_dataset(basename, stored_uri):
+    data = {'delimiter': ',', 'quoteChar': '"', 'dsName': basename, 'dsDesc': '', 'dsType': 'IMPORTED',
+            'importType': 'UPLOAD', 'filenameBeforeUpload': basename, 'storageType': 'LOCAL', 'sheetName': '',
+            'storedUri': stored_uri, 'fileFormat': get_file_format(basename)}
+    if args.manual_colcnt is not None:
+        data['manualColcnt'] = args.manual_colcnt
+    requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
 
 
 METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
 DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
 
 HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
+stored_uri = None
 
-upload_id, limit_size = get_upload_policy()
+if args.src_path is not None:
+    upload_id, limit_size = get_upload_policy()
 
-total_size = subprocess.check_output("wc -c %s | awk '{print $1'}" % args.src_path, shell=True).decode()
-total_size = total_size.strip()
-basename = os.path.basename(args.src_path)
+    total_size = subprocess.check_output("wc -c %s | awk '{print $1'}" % args.src_path, shell=True).decode()
+    total_size = total_size.strip()
+    basename = os.path.basename(args.src_path)
 
-stored_uri = post_upload_file(HDR, upload_id, limit_size, total_size, basename)
-print(stored_uri)
+    stored_uri = post_upload_file(upload_id, limit_size, total_size, basename)
+    post_create_file_dataset(basename, stored_uri)
+    print(stored_uri)
 
 # eof
