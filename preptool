@@ -14,20 +14,16 @@ parser.add_argument('-v', '--verbose', help='print out more responses in detail'
 parser.add_argument('-H', '--hostname', help='API server hostname (default: localhost)', default='localhost')
 parser.add_argument('-p', '--port', help='API server port (default: 8180)', default='8180')
 parser.add_argument('-s', '--src-path', help='Source pathname')
-parser.add_argument('-d', '--dest-path', help='Destination pathname (If i')
-parser.add_argument('-w', '--wds-id', help='Target wrangled dataset ID to apply')
-parser.add_argument('-D', '--datasource-id', help='Target datasource ID to ingest into')
-parser.add_argument('--src-db', help='Source database')
-parser.add_argument('--src-tbl', help='Source table')
-parser.add_argument('--src-user', help='Source DB username')
-parser.add_argument('--src-pass', help='Source DB password')
-parser.add_argument('--dest-db', help='Destination database')
-parser.add_argument('--dest-tbl', help='Destination table')
-parser.add_argument('--dest-user', help='Destination DB username')
-parser.add_argument('--dest-pass', help='Destination DB password')
+parser.add_argument('-d', '--dest-path', help="Destination pathname (When this is a directory, append src's basename")
+parser.add_argument('-w', '--wds-id', help='Wrangled dataset ID to apply')
+parser.add_argument('-c', '--connection-id', help='Data connection ID')
+parser.add_argument('-D', '--datasource-id', help='Datasource ID to ingest into')
+parser.add_argument('-i', '--ids-name', help='New imported dataset name', default='anonymous')
+parser.add_argument('-q', '--query-stmt', help='Query statement')
 parser.add_argument('--search-wds', help='Search wrangled dataset IDs by name')
+parser.add_argument('--search-connection', help='Search data connection IDs by name')
 parser.add_argument('--search-datasource', help='Search datasource IDs by name')
-parser.add_argument('--manual-colcnt', help='Manual max column count when the max column count')
+parser.add_argument('--manual-colcnt', help='Manual max column count when the max column count', default='0')
 args = parser.parse_args()
 
 
@@ -63,14 +59,28 @@ def get_file_format(basename):
 
 
 def post_create_file_dataset(basename, stored_uri):
-    data = {'delimiter': ',', 'quoteChar': '"', 'dsName': basename, 'dsDesc': '', 'dsType': 'IMPORTED',
+    ids_name = basename if args.ids_name is None else args.ids_name
+    data = {'delimiter': ',', 'quoteChar': '"', 'dsName': ids_name, 'dsDesc': '', 'dsType': 'IMPORTED',
             'importType': 'UPLOAD', 'filenameBeforeUpload': basename, 'storageType': 'LOCAL', 'sheetName': '',
             'storedUri': stored_uri, 'fileFormat': get_file_format(basename)}
     if args.manual_colcnt is not None:
         data['manualColcnt'] = args.manual_colcnt
-    requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
+    r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
+    print('File type dataset created: src_path=%s ids_name=%s stored_uri=%s' % (args.src_path, ids_name, stored_uri))
 
 
+def post_create_database_dataset(dc_id, ids_name, query_stmt):
+    assert ids_name is not None and query_stmt is not None
+    data = {'dcId': dc_id, 'dsName': ids_name, 'dsType': 'IMPORTED', 'importType': 'DATABASE', 'queryStmt': query_stmt,
+            'rsType': 'QUERY'}
+    r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
+    if (r.status_code == 200):
+        print('Creating database type dataset succeeded: ids_name=%s query_stmt=%s' % (ids_name, query_stmt))
+    else:
+        print('Creating database type dataset failed: ' + r)
+
+
+### Start
 METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
 DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
 
@@ -79,13 +89,11 @@ stored_uri = None
 
 if args.src_path is not None:
     upload_id, limit_size = get_upload_policy()
-
-    total_size = subprocess.check_output("wc -c %s | awk '{print $1'}" % args.src_path, shell=True).decode()
-    total_size = total_size.strip()
+    total_size = subprocess.check_output("wc -c %s | awk '{print $1'}" % args.src_path, shell=True).decode().strip()
     basename = os.path.basename(args.src_path)
-
     stored_uri = post_upload_file(upload_id, limit_size, total_size, basename)
     post_create_file_dataset(basename, stored_uri)
-    print(stored_uri)
+else:
+    post_create_database_dataset('6110369b-2645-4353-a283-691728de9b84', args.ids_name, args.query_stmt)
 
 # eof
