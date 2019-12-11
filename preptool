@@ -1,13 +1,7 @@
 #!/usr/bin/env python
 # encoding:utf8
 
-import argparse
-import requests
-import base64
-import subprocess
-import os
-import copy
-import json
+import argparse, requests, base64, subprocess, os, copy, json
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-v', '--verbose', help='print out more responses in detail', action='store_true')
@@ -66,7 +60,10 @@ def post_create_file_dataset(basename, stored_uri):
     if args.manual_colcnt is not None:
         data['manualColcnt'] = args.manual_colcnt
     r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
-    print('File type dataset created: src_path=%s ids_name=%s stored_uri=%s' % (args.src_path, ids_name, stored_uri))
+    if (r.status_code == 200):
+        print('File dataset created: src_path=%s ids_name=%s stored_uri=%s' % (args.src_path, ids_name, stored_uri))
+    else:
+        print('Creating file type dataset failed: ' + r)
 
 
 def post_create_database_dataset(dc_id, ids_name, query_stmt):
@@ -75,7 +72,7 @@ def post_create_database_dataset(dc_id, ids_name, query_stmt):
             'rsType': 'QUERY'}
     r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
     if (r.status_code == 200):
-        print('Creating database type dataset succeeded: ids_name=%s query_stmt=%s' % (ids_name, query_stmt))
+        print('Database dataset created: ids_name=%s query_stmt=%s' % (ids_name, query_stmt))
     else:
         print('Creating database type dataset failed: ' + r)
 
@@ -83,17 +80,30 @@ def post_create_database_dataset(dc_id, ids_name, query_stmt):
 ### Start
 METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
 DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
+CONNECTIONS_URL = METATRON_URL + '/api/connections'
 
 HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
-stored_uri = None
 
-if args.src_path is not None:
+if args.search_wds:
+    r = requests.get(DATASETS_URL + '/search/findByDsNameContaining?dsName=' + args.search_wds, headers=HDR)
+    for d in r.json()['_embedded']['preparationdatasets']:
+        print(d['dsId'])
+        args.wds_id = args.wds_id if args.wds_id else d['dsId']
+
+if args.search_connection:
+    r = requests.post(CONNECTIONS_URL + '/filter?projection=list&page=0&size=20&sort=createdTime,desc', headers=HDR,
+                      data=json.dumps({'containsText': args.search_connection}))
+    for d in r.json()['_embedded']['connections']:
+        print(d['id'])
+        args.connection_id = args.connection_id if args.connection_id else d['id']
+
+if args.src_path:
     upload_id, limit_size = get_upload_policy()
     total_size = subprocess.check_output("wc -c %s | awk '{print $1'}" % args.src_path, shell=True).decode().strip()
     basename = os.path.basename(args.src_path)
     stored_uri = post_upload_file(upload_id, limit_size, total_size, basename)
     post_create_file_dataset(basename, stored_uri)
-else:
+elif args.query_stmt:
     post_create_database_dataset('6110369b-2645-4353-a283-691728de9b84', args.ids_name, args.query_stmt)
 
 # eof
