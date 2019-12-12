@@ -21,6 +21,7 @@ parser.add_argument('--manual-colcnt', help='Manual max column count when the ma
 args = parser.parse_args()
 
 
+# 1. Get auth token
 def get_token():
     auth_key = base64.b64encode('polaris_client:polaris'.encode()).decode()
     auth_hdr = {'Content-Type': 'application/json', 'Authorization': 'Basic ' + auth_key}
@@ -28,11 +29,13 @@ def get_token():
     return r.json()['access_token']
 
 
+# 2. Get upload policy
 def get_upload_policy():
     j = requests.get(DATASETS_URL + '/file_upload', headers=HDR).json()
     return j['upload_id'], j['limit_size']
 
 
+# 3. Upload file chunks
 def post_upload_file(upload_id, limit_size, total_size, basename):
     hdr = copy.deepcopy(HDR)
     del hdr['Content-Type']  # Content-Type becomes multipart/form-data when files is not None
@@ -41,6 +44,15 @@ def post_upload_file(upload_id, limit_size, total_size, basename):
     files = {'file': open(args.src_path, 'rb')}
     r = requests.post(DATASETS_URL + '/file_upload?' + params, headers=hdr, files=files)
     return r.json()['storedUri']
+
+
+# 4. Search data connection
+def search_data_connection():
+    r = requests.post(CONNECTIONS_URL + '/filter?projection=list&page=0&size=20&sort=createdTime,desc', headers=HDR,
+                      data=json.dumps({'containsText': args.search_connection}))
+    for d in r.json()['_embedded']['connections']:
+        print(d['id'])
+        args.connection_id = args.connection_id if args.connection_id else d['id']
 
 
 def get_file_format(basename):
@@ -52,50 +64,55 @@ def get_file_format(basename):
         return 'CSV'
 
 
+# 5-1. Create imported dataset - file
 def post_create_file_dataset(basename, stored_uri):
     ids_name = basename if args.ids_name is None else args.ids_name
-    data = {'delimiter': ',', 'quoteChar': '"', 'dsName': ids_name, 'dsDesc': '', 'dsType': 'IMPORTED',
-            'importType': 'UPLOAD', 'filenameBeforeUpload': basename, 'storageType': 'LOCAL', 'sheetName': '',
+    data = {'delimiter': ',', 'quoteChar': '"', 'dsName': ids_name, 'dsType': 'IMPORTED',
+            'importType': 'UPLOAD', 'filenameBeforeUpload': basename, 'storageType': 'LOCAL',
             'storedUri': stored_uri, 'fileFormat': get_file_format(basename)}
     if args.manual_colcnt is not None:
         data['manualColcnt'] = args.manual_colcnt
     r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
-    if (r.status_code == 200):
+    if r.status_code == 200:
         print('File dataset created: src_path=%s ids_name=%s stored_uri=%s' % (args.src_path, ids_name, stored_uri))
     else:
         print('Creating file type dataset failed: ' + r)
 
 
+# 5-2. Create imported dataset - query
 def post_create_database_dataset(dc_id, ids_name, query_stmt):
     assert ids_name is not None and query_stmt is not None
     data = {'dcId': dc_id, 'dsName': ids_name, 'dsType': 'IMPORTED', 'importType': 'DATABASE', 'queryStmt': query_stmt,
             'rsType': 'QUERY'}
     r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
-    if (r.status_code == 200):
+    if r.status_code == 200:
         print('Database dataset created: ids_name=%s query_stmt=%s' % (ids_name, query_stmt))
     else:
         print('Creating database type dataset failed: ' + r)
 
 
-### Start
+# 6. Search wrangled dataset
+def search_wrangled_dataset():
+    r = requests.get(DATASETS_URL + '/search/findByDsNameContaining?dsName=' + args.search_wds, headers=HDR)
+    for d in r.json()['_embedded']['preparationdatasets']:
+        print(d['dsId'])
+        args.wds_id = args.wds_id if args.wds_id else d['dsId']
+
+
+# 7. Get dataset details
+def get_dataset_details():
+    pass
+
+
+# === Start ===
 METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
 DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
 CONNECTIONS_URL = METATRON_URL + '/api/connections'
 
 HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
 
-if args.search_wds:
-    r = requests.get(DATASETS_URL + '/search/findByDsNameContaining?dsName=' + args.search_wds, headers=HDR)
-    for d in r.json()['_embedded']['preparationdatasets']:
-        print(d['dsId'])
-        args.wds_id = args.wds_id if args.wds_id else d['dsId']
-
 if args.search_connection:
-    r = requests.post(CONNECTIONS_URL + '/filter?projection=list&page=0&size=20&sort=createdTime,desc', headers=HDR,
-                      data=json.dumps({'containsText': args.search_connection}))
-    for d in r.json()['_embedded']['connections']:
-        print(d['id'])
-        args.connection_id = args.connection_id if args.connection_id else d['id']
+    search_data_connection()
 
 if args.src_path:
     upload_id, limit_size = get_upload_policy()
@@ -105,5 +122,8 @@ if args.src_path:
     post_create_file_dataset(basename, stored_uri)
 elif args.query_stmt:
     post_create_database_dataset('6110369b-2645-4353-a283-691728de9b84', args.ids_name, args.query_stmt)
+
+if args.search_wds:
+    search_wrangled_dataset()
 
 # eof
