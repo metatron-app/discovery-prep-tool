@@ -206,9 +206,9 @@ def convert_rule(wds_id_map, rule):
 
     for old_wds_id in wds_id_map:
         if rule['ruleString'].find(old_wds_id) >= 0:
-            rule_string = rule['ruleString'].replace(old_wds_id, wds_id_map[old_wds_id])
-            json_rule_string = rule['jsonRuleString'].replace(old_wds_id, wds_id_map[old_wds_id])
-            break
+            rule_string = rule_string.replace(old_wds_id, wds_id_map[old_wds_id])
+            json_rule_string = json_rule_string.replace(old_wds_id, wds_id_map[old_wds_id])
+
     return rule_string, json_rule_string
 
 
