@@ -183,14 +183,49 @@ def import_dataflow(d, new_ids_ids):
 
 
 def find_ds(datasets, ds_id):
-    for d in datasets:
+    for i in range(len(datasets)):
+        d = datasets[i]
         if d['dsId'] == ds_id:
-            return d
-    return None
+            return i, d
+    return None, None
+
+
+def have_upstream_not_done(datasets, done_ids, upstream_map, ds_id):
+    for relation in upstream_map:
+        if relation['dsId'] == ds_id:
+            i, upstream_ds = find_ds(datasets, relation['upstreamDsId'])
+            if upstream_ds['dsType'] == 'WRANGLED':
+                if upstream_ds['dsId'] not in done_ids:
+                    return True
+    return False
+
+
+def convert_rule(wds_id_map, rule):
+    rule_string = rule['ruleString']
+    json_rule_string = rule['jsonRuleString']
+
+    for old_wds_id in wds_id_map:
+        if rule['ruleString'].find(old_wds_id) >= 0:
+            rule_string = rule['ruleString'].replace(old_wds_id, wds_id_map[old_wds_id])
+            json_rule_string = rule['jsonRuleString'].replace(old_wds_id, wds_id_map[old_wds_id])
+            break
+    return rule_string, json_rule_string
+
+
+def import_wds_one(old_wds_id, wds_id_map):
+    i, dataset = find_ds(d['datasets'], old_wds_id)
+    rules = dataset['transformRules']
+    for i in range(1, len(rules)):
+        rule_string, json_rule_string = convert_rule(wds_id_map, rules[i])
+        data = {'count': 1, 'op': 'APPEND', 'ruleIdx': i - 1, 'ruleString': rule_string,
+                'uiRuleString': json_rule_string}
+        requests.put(DATASETS_URL + '/' + wds_id_map[old_wds_id] + '/transform', headers=HDR, data=json.dumps(data))
 
 
 def import_wds(new_df_id, d, ids_id_map):
     wds_id_map = {}
+    done_ids = []
+
     for dataset in d['datasets']:
         if dataset['dsType'] == 'IMPORTED':
             continue
@@ -201,14 +236,12 @@ def import_wds(new_df_id, d, ids_id_map):
         new_ids_id = ids_id_map[old_ids_id]
         wds_id_map[old_wds_id] = post_add_wrangled_dataset(new_df_id, new_ids_id, dataset['dsName'])
 
-    for old_wds_id in wds_id_map:
-        dataset = find_ds(d['datasets'], old_wds_id)
-        rules = dataset['transformRules']
-        for i in range(1, len(rules)):
-            rule = rules[i]
-            data = {'count': 10, 'op': 'APPEND', 'ruleIdx': i - 1, 'ruleString': rule['ruleString'],
-                    'uiRuleString': rule['jsonRuleString']}
-            requests.put(DATASETS_URL + '/' + wds_id_map[old_wds_id] + '/transform', headers=HDR, data=json.dumps(data))
+    while len(done_ids) < len(wds_id_map):
+        for old_wds_id in wds_id_map:
+            if old_wds_id in done_ids or have_upstream_not_done(d['datasets'], done_ids, d['upstreammap'], old_wds_id):
+                continue
+            import_wds_one(old_wds_id, wds_id_map)
+            done_ids.append(old_wds_id)
 
 
 # === Start ===
