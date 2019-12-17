@@ -50,12 +50,12 @@ def post_upload_file(upload_id, limit_size, total_size, basename):
 
 
 # 4. Search data connection
-def search_data_connection():
+def search_data_connection(dc_name):
     r = requests.post(CONNECTIONS_URL + '/filter?projection=list&page=0&size=20&sort=createdTime,desc', headers=HDR,
-                      data=json.dumps({'containsText': args.search_connection}))
+                      data=json.dumps({'containsText': dc_name}))
     for d in r.json()['_embedded']['connections']:
-        print(d['id'])
-        args.connection_id = args.connection_id if args.connection_id else d['id']
+        return d['id']
+    return None
 
 
 def get_file_format(basename):
@@ -83,10 +83,15 @@ def post_create_file_dataset(basename, stored_uri):
 
 
 # 5-2. Create imported dataset - query
-def post_create_database_dataset(dc_id, ids_name, query_stmt):
-    assert ids_name is not None and query_stmt is not None
-    data = {'dcId': dc_id, 'dsName': ids_name, 'dsType': 'IMPORTED', 'importType': 'DATABASE', 'queryStmt': query_stmt,
-            'rsType': 'QUERY'}
+def post_create_database_dataset(dc_id, ids_name, query_stmt, db_name=None, tbl_name=None):
+    assert ids_name is not None
+    if query_stmt is not None:
+        data = {'dcId': dc_id, 'dsName': ids_name, 'dsType': 'IMPORTED', 'importType': 'DATABASE',
+                'queryStmt': query_stmt, 'rsType': 'QUERY'}
+    else:
+        data = {'dcId': dc_id, 'dsName': ids_name, 'dsType': 'IMPORTED', 'importType': 'DATABASE',
+                'dbName': db_name, 'tblName': tbl_name, 'rsType': 'TABLE'}
+
     r = requests.post(DATASETS_URL, headers=HDR, data=json.dumps(data))
     if r.status_code == 200:
         print('Database dataset created: ids_name=%s query_stmt=%s' % (ids_name, query_stmt))
@@ -98,7 +103,6 @@ def post_create_database_dataset(dc_id, ids_name, query_stmt):
 def search_wrangled_dataset():
     r = requests.get(DATASETS_URL + '/search/findByDsNameContaining?dsName=' + args.search_wds, headers=HDR)
     for d in r.json()['_embedded']['preparationdatasets']:
-        print(d['dsId'])
         args.wds_id = args.wds_id if args.wds_id else d['dsId']
 
 
@@ -115,7 +119,7 @@ def trim(d, keep_keys):
 def export_dataset(ds_id):
     d = requests.get(DATASETS_URL + '/' + ds_id, headers=HDR).json()
     return trim(d, ['dsName', 'dsDesc', 'dsType', 'importType', 'rsType', 'dbName', 'tblName', 'queryStmt',
-                    'transformRules', 'storedUri'])
+                    'transformRules', 'storedUri', 'dcName'])
 
 
 def search_dataflow():
@@ -132,15 +136,27 @@ def export_dataflow(df_id):
     print(json.dumps(rd, indent=4))
 
 
-def import_datasets(dsl):
+def import_ids(dsl):
     for d in dsl:
         if d['dsType'] == 'IMPORTED':
             # NOTE: UPLOAD type I.DS should be created in advance.
             if d['importType'] == 'URI':
                 post_create_file_dataset(os.path.basename(d['storedUri']), d['storedUri'])
+            elif d['importType'] == 'DATABASE':
+                dc_id = search_data_connection(d['dcName'])
+                if dc_id is None:
+                    continue
+                if 'queryStmt' in d:
+                    post_create_database_dataset(dc_id, d['dsName'], d['queryStmt'])
+                else:
+                    post_create_database_dataset(dc_id, d['dsName'], None, d['dbName'], d['tblName'])
 
 
 def import_dataflow(d):
+    pass
+
+
+def import_wds(dsl):
     pass
 
 
@@ -152,8 +168,8 @@ CONNECTIONS_URL = METATRON_URL + '/api/connections'
 
 HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
 
-if args.search_connection:
-    search_data_connection()
+if args.connection_id is None and args.search_connection:
+    args.connection_id = search_data_connection(args.search_connection)
 
 if args.src_path:
     upload_id, limit_size = get_upload_policy()
@@ -176,7 +192,8 @@ if args.export_df_id:
 if args.import_df_file:
     with open(args.import_df_file, 'rb') as f:
         d = json.loads(f.read().decode())
-        import_datasets(d['datasets'])
+        import_ids(d['datasets'])
         import_dataflow(d['dataflow'])
+        import_wds(d['datasets'])
 
 # eof
