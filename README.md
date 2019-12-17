@@ -19,6 +19,8 @@ A command line program for data preparation. Useful for scripting, scheduling, e
 | 12 | Download snapshot       | /api/preparationsnapshots/{ssId}/download          | GET       | application/json    |
 | 13 | Search datasource       | /api/datasources/filter                            | POST      | application/json    |
 | 14 | Append to datasource    | /api/datasources/{id}/append                       | PUT/PATCH | application/json    |
+| 15 | Create dataflow         | /api/preparationdataflows                          | POST      | application/json    |
+| 16 | Add dataset to dataflow | /api/preparationdataflows/{dfId}/update_datasets   | PUT       | application/json    |
 
 
 ## 1. Get auth token
@@ -107,6 +109,10 @@ A command line program for data preparation. Useful for scripting, scheduling, e
 | rsType               | string | o (database) | Result set type - TABLE / QUERY        | QUERY                                | Database dataset only |
 | queryStmt            | string | o (database) | SQL statement without ;                | SELECT * FROM EMP                    | Database dataset only |
 
+#### Response body
+| Name | Type   | Description         | Note |
+|:-----|:-------|:--------------------|:-----|
+| dsId | string | Imported dataset ID |      |
 
 
 
