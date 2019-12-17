@@ -115,22 +115,33 @@ def trim(d, keep_keys):
 def export_dataset(ds_id):
     d = requests.get(DATASETS_URL + '/' + ds_id, headers=HDR).json()
     return trim(d, ['dsName', 'dsDesc', 'dsType', 'importType', 'rsType', 'dbName', 'tblName', 'queryStmt',
-                    'transformRules'])
+                    'transformRules', 'storedUri'])
 
 
 def search_dataflow():
     r = requests.get(DATAFLOWS_URL + '/search/findByDfNameContaining?dfName=' + args.search_dataflow, headers=HDR)
     for d in r.json()['_embedded']['preparationdataflows']:
-        print(d['dfId'])
         args.export_df_id = args.export_df_id if args.export_df_id else d['dfId']
 
 
 def export_dataflow(df_id):
     d = requests.get(DATAFLOWS_URL + '/' + df_id, headers=HDR).json()
-    rd = {'datasets': [], 'dataflows': trim(d, ['dfName', 'dfDesc'])}
+    rd = {'datasets': [], 'dataflow': trim(d, ['dfName', 'dfDesc'])}
     for dataset in d['datasets']:
         rd['datasets'].append(export_dataset(dataset['dsId']))
     print(json.dumps(rd, indent=4))
+
+
+def import_datasets(dsl):
+    for d in dsl:
+        if d['dsType'] == 'IMPORTED':
+            # NOTE: UPLOAD type I.DS should be created in advance.
+            if d['importType'] == 'URI':
+                post_create_file_dataset(os.path.basename(d['storedUri']), d['storedUri'])
+
+
+def import_dataflow(d):
+    pass
 
 
 # === Start ===
@@ -161,5 +172,11 @@ if args.search_dataflow:
 
 if args.export_df_id:
     export_dataflow(args.export_df_id)
+
+if args.import_df_file:
+    with open(args.import_df_file, 'rb') as f:
+        d = json.loads(f.read().decode())
+        import_datasets(d['datasets'])
+        import_dataflow(d['dataflow'])
 
 # eof

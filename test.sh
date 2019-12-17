@@ -4,5 +4,6 @@
 ./preptool -q "select * from test.t" --search-connection "MySQL" -i "DB test dataset"
 ./preptool --search-wds "anonymous" | head -1
 ./preptool --search-connection "MySQL" | head -1
+./preptool --search-dataflow "SKT"
 
 #eof
