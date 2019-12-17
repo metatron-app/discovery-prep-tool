@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding:utf8
 
-import argparse, requests, base64, subprocess, os, copy, json
+import argparse, requests, base64, subprocess, os, copy, json, pprint
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-v', '--verbose', help='print out more responses in detail', action='store_true')
@@ -14,9 +14,12 @@ parser.add_argument('-c', '--connection-id', help='Data connection ID')
 parser.add_argument('-D', '--datasource-id', help='Datasource ID to ingest into')
 parser.add_argument('-i', '--ids-name', help='New imported dataset name', default='anonymous')
 parser.add_argument('-q', '--query-stmt', help='Query statement')
-parser.add_argument('--search-wds', help='Search wrangled dataset IDs by name')
-parser.add_argument('--search-connection', help='Search data connection IDs by name')
-parser.add_argument('--search-datasource', help='Search datasource IDs by name')
+parser.add_argument('-E', '--export-df-id', help='Export a dataflow as JSON')
+parser.add_argument('-I', '--import-df-file', help='Import a dataflow from JSON file')
+parser.add_argument('--search-wds', help='Search wrangled dataset ID by name')
+parser.add_argument('--search-connection', help='Search data connection ID by name')
+parser.add_argument('--search-datasource', help='Search datasource ID by name')
+parser.add_argument('--search-dataflow', help='Search dataflow ID by name')
 parser.add_argument('--manual-colcnt', help='Manual max column count when the max column count', default='0')
 args = parser.parse_args()
 
@@ -76,7 +79,7 @@ def post_create_file_dataset(basename, stored_uri):
     if r.status_code == 200:
         print('File dataset created: src_path=%s ids_name=%s stored_uri=%s' % (args.src_path, ids_name, stored_uri))
     else:
-        print('Creating file type dataset failed: ' + r)
+        print('Creating file type dataset failed: ' + str(r))
 
 
 # 5-2. Create imported dataset - query
@@ -88,7 +91,7 @@ def post_create_database_dataset(dc_id, ids_name, query_stmt):
     if r.status_code == 200:
         print('Database dataset created: ids_name=%s query_stmt=%s' % (ids_name, query_stmt))
     else:
-        print('Creating database type dataset failed: ' + r)
+        print('Creating database type dataset failed: ' + str(r))
 
 
 # 6. Search wrangled dataset
@@ -100,13 +103,40 @@ def search_wrangled_dataset():
 
 
 # 7. Get dataset details
-def get_dataset_details():
-    pass
+def get_dataset_details(ds_id):
+    d = requests.get(DATASETS_URL + '/' + ds_id, headers=HDR).json()
+    print(json.dumps(d, indent=4))
+
+
+def trim(d, keep_keys):
+    return dict((key, d[key]) for key in keep_keys if key in d)
+
+
+def export_dataset(ds_id):
+    d = requests.get(DATASETS_URL + '/' + ds_id, headers=HDR).json()
+    return trim(d, ['dsName', 'dsDesc', 'dsType', 'importType', 'rsType', 'dbName', 'tblName', 'queryStmt',
+                    'transformRules'])
+
+
+def search_dataflow():
+    r = requests.get(DATAFLOWS_URL + '/search/findByDfNameContaining?dfName=' + args.search_dataflow, headers=HDR)
+    for d in r.json()['_embedded']['preparationdataflows']:
+        print(d['dfId'])
+        args.export_df_id = args.export_df_id if args.export_df_id else d['dfId']
+
+
+def export_dataflow(df_id):
+    d = requests.get(DATAFLOWS_URL + '/' + df_id, headers=HDR).json()
+    rd = {'datasets': [], 'dataflows': trim(d, ['dfName', 'dfDesc'])}
+    for dataset in d['datasets']:
+        rd['datasets'].append(export_dataset(dataset['dsId']))
+    print(json.dumps(rd, indent=4))
 
 
 # === Start ===
 METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
 DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
+DATAFLOWS_URL = METATRON_URL + '/api/preparationdataflows'
 CONNECTIONS_URL = METATRON_URL + '/api/connections'
 
 HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
@@ -121,9 +151,15 @@ if args.src_path:
     stored_uri = post_upload_file(upload_id, limit_size, total_size, basename)
     post_create_file_dataset(basename, stored_uri)
 elif args.query_stmt:
-    post_create_database_dataset('6110369b-2645-4353-a283-691728de9b84', args.ids_name, args.query_stmt)
+    post_create_database_dataset(args.connection_id, args.ids_name, args.query_stmt)
 
 if args.search_wds:
     search_wrangled_dataset()
+
+if args.search_dataflow:
+    search_dataflow()
+
+if args.export_df_id:
+    export_dataflow(args.export_df_id)
 
 # eof
