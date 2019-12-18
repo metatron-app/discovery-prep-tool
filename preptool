@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding:utf8
 
-import argparse, requests, base64, subprocess, os, copy, json, uuid
+import argparse, requests, base64, subprocess, os, copy, json, uuid, time
 
 parser = argparse.ArgumentParser()
 
@@ -14,8 +14,8 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-H', '--hostname', help='API server hostname (default: localhost)', default='localhost')
 parser.add_argument('-p', '--port', help='API server port (default: 8180)', default='8180')
-parser.add_argument('-e', '--export-dataflow-name', help='Export a dataflow as JSON')
-parser.add_argument('-i', '--import-file', help='Import a dataflow from JSON file')
+parser.add_argument('-E', '--export-dataflow-name', help='Export a dataflow as JSON')
+parser.add_argument('-I', '--import-file', help='Import a dataflow from JSON file')
 parser.add_argument('-f', '--file-path', help='File pathname to upload')
 parser.add_argument('-c', '--conn-name', help='Data connection name')
 parser.add_argument('-q', '--query-stmt', help='Query statement')
@@ -23,8 +23,10 @@ parser.add_argument('-n', '--new-ids-name', help='New imported dataset name')
 parser.add_argument('-o', '--old-ids-name', help='Old imported dataset name')
 parser.add_argument('-F', '--dataflow-name', help='Dataflow name')
 parser.add_argument('-w', '--wds-name', help='Wrangled dataset name')
-parser.add_argument('-s', '--snapshot-name', help='Snapshot name')
+parser.add_argument('-s', '--new-snapshot-name', help='New snapshot name', default='snapshot1')
+parser.add_argument('-e', '--engine-type', help='ETL engine (EMBEDDED or SPARK)', default='EMBEDDED')
 parser.add_argument('-t', '--target-path', help='Download target pathname', default='')
+parser.add_argument('-S', '--target-snapshot-name', help='Snapshot name for downloading', default='snapshot1')
 parser.add_argument('-d', '--datasource', help='Metatron datasource name')
 parser.add_argument('--manual-colcnt', help='Manual max column count when the max column count', default='0')
 
@@ -65,9 +67,6 @@ def get_ds_id(ds_name, ds_type):
 
 
 def search_dataflow(df_name):
-#    params = {'dfName': df_name, 'projection': 'forListView', 'pseudoParam': 1576672032366, 'page': 0, 'size': 20}
-#    page = 0 & size = 20 & projection = forListView & pseudoParam = 1576672032366 & dfName = multi & sort = createdTime % 2
-#    Cdesc
     r = requests.get(DATAFLOWS_URL + '/search/findByDfNameContaining?dfName=%s' % df_name, headers=HDR)
     for d in r.json()['_embedded']['preparationdataflows']:
         return d['dfId']
@@ -285,10 +284,44 @@ def post_swap_upstream(df_name, old_ids_name, new_ids_name):
     assert r.status_code == 200
 
 
+def post_transform_snapshot(wds_id, ss_name, engine_type, local_uri):
+    data = {'ssName': ss_name, 'ssType': 'URI', 'storedUri': local_uri, 'engine': engine_type}
+    print('storedUri=' + local_uri)
+    r = requests.post(DATASETS_URL + '/' + wds_id + '/transform/snapshot', headers=HDR, data=json.dumps(data))
+    assert r.status_code == 200
+    print(r.json())
+    return r.json()['ssId']
+
+
+def get_snapshot_configuration(wds_id):
+    j = requests.get(DATASETS_URL + '/' + wds_id + '/transform/configuration', headers=HDR).json()
+    return j['ss_name'], j['file_uri']['LOCAL']
+
+
+def wait_snapshot_done(ss_id):
+    for i in range(0, 3600):
+        status = requests.get(SNAPSHOTS_URL + '/' + ss_id, headers=HDR).json()['status']
+        if status == 'SUCCEEDED':
+            print('Snapshot done: ss_id=%s elapsed=%ss' % (ss_id, i))
+            return
+        elif status == 'FAILED':
+            print('Snapshot failed: ss_id=%s ran=%ss' % (ss_id, i))
+            return
+        time.sleep(1)
+    print('Snapshot timeout: ss_id=%s timeout=%ss' % (ss_id, 3600))
+
+
+def download_snapshot(ss_id, target_path):
+    params = {'fileType': 'csv'}
+    r = requests.get(SNAPSHOTS_URL + '/' + ss_id + '/' + '/download', params=params, headers=HDR)
+    open(target_path, 'wb').write(r.content)
+
+
 # === Start ===
 METATRON_URL = 'http://%s:%s' % (args.hostname, args.port)
 DATASETS_URL = METATRON_URL + '/api/preparationdatasets'
 DATAFLOWS_URL = METATRON_URL + '/api/preparationdataflows'
+SNAPSHOTS_URL = METATRON_URL + '/api/preparationsnapshots'
 CONNECTIONS_URL = METATRON_URL + '/api/connections'
 
 HDR = {'Authorization': "bearer " + get_token(), 'Content-Type': 'application/json', 'Accept': 'application/json'}
@@ -319,6 +352,14 @@ if args.old_ids_name:
     post_swap_upstream(args.dataflow_name, args.old_ids_name, args.new_ids_name)
 
 if args.wds_name:
+    assert args.new_snapshot_name
     wds_id = get_ds_id(args.wds_name, 'WRANGLED')
+    ss_name, local_uri = get_snapshot_configuration(wds_id)
+    ss_name = args.new_snapshot_name if args.new_snapshot_name else ss_name
+    ss_id = post_transform_snapshot(wds_id, ss_name, args.engine_type, local_uri + '.csv')
+    print(ss_id)
+    wait_snapshot_done(ss_id)
+    download_snapshot(ss_id, args.target_path)
+    args.target_snapshot_name = ss_id
 
 # eof
